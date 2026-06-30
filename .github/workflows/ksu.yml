@@ -1,0 +1,162 @@
+name: Build ZTE F50 Kernel with KernelSU + Droidspaces
+
+on:
+  workflow_dispatch:
+    inputs:
+      ksu_version:
+        description: 'KernelSU version (e.g. v3.2.5, v1.1.1)'
+        required: false
+        default: 'v3.2.5'
+      build_droidspaces:
+        description: 'Enable Droidspaces configs'
+        required: false
+        default: 'true'
+
+permissions:
+  contents: write
+
+jobs:
+  build-kernel:
+    name: Build ZTE F50 Kernel (KernelSU + Droidspaces)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 8192
+          temp-reserve-mb: 2048
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+
+      - name: Checkout kernel source
+        uses: actions/checkout@v4
+        with:
+          repository: enceka/android_kernel_zte_ums9620_mifi_f50
+          ref: main
+          path: kernel-source
+          fetch-depth: 1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang-14 lld make git python3 bc flex bison ccache libelf-dev pahole openssl libssl-dev perl zstd binutils ncurses-dev libncurses5-dev libncursesw5-dev
+
+      - name: Clone AOSP Clang toolchain
+        run: |
+          mkdir -p $HOME/toolchains
+          cd $HOME/toolchains
+          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b.git clang-r416183b
+          echo "CLANG_PATH=$HOME/toolchains/clang-r416183b/bin" >> $GITHUB_ENV
+
+      - name: Clone AOSP GCC toolchain aarch64
+        run: |
+          cd $HOME/toolchains
+          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git gcc-aarch64
+          echo "GCC_AARCH64_PATH=$HOME/toolchains/gcc-aarch64/bin" >> $GITHUB_ENV
+
+      - name: Clone AOSP GCC toolchain arm32
+        run: |
+          cd $HOME/toolchains
+          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git gcc-arm
+          echo "GCC_ARM_PATH=$HOME/toolchains/gcc-arm/bin" >> $GITHUB_ENV
+
+      - name: Setup AnyKernel3
+        run: git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git $HOME/AnyKernel3
+
+      - name: Apply Droidspaces configs
+        if: github.event.inputs.build_droidspaces == 'true'
+        run: |
+          cd kernel-source
+          echo "" >> arch/arm64/configs/gki_defconfig
+          echo "# Droidspaces GKI-safe configs" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_SYSVIPC=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_POSIX_MQUEUE=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IPC_NS=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_PID_NS=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_DEVTMPFS=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y" >> arch/arm64/configs/gki_defconfig
+
+      - name: Apply KernelSU
+        if: github.event.inputs.ksu_version != ''
+        run: |
+          cd kernel-source
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s ${{ github.event.inputs.ksu_version }}
+
+      - name: Build kernel
+        run: |
+          cd kernel-source
+          export PATH=$CLANG_PATH:$GCC_AARCH64_PATH:$GCC_ARM_PATH:$PATH
+          export CC=clang
+          export CROSS_COMPILE=aarch64-linux-android-
+          export CROSS_COMPILE_ARM32=arm-linux-androideabi-
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export ARCH=arm64
+          export LLVM=1
+          export LLVM_IAS=1
+          make O=out ARCH=arm64 f50_defconfig
+          make O=out ARCH=arm64 -j$(nproc) 2>&1 | tee build.log
+
+      - name: Check build output
+        run: |
+          ls -la kernel-source/out/arch/arm64/boot/
+          file kernel-source/out/arch/arm64/boot/Image* || true
+
+      - name: Package with AnyKernel3
+        run: |
+          cd $HOME/AnyKernel3
+          cp kernel-source/out/arch/arm64/boot/Image* $HOME/AnyKernel3/ 2>/dev/null || true
+          cp kernel-source/out/arch/arm64/boot/dts/sprd/*.dtb $HOME/AnyKernel3/ 2>/dev/null || true
+          echo '# AnyKernel3 Ramdisk Mod Script' > anykernel.sh
+          echo 'properties() { '"'"'" >> anykernel.sh
+          echo 'do.devicecheck=1' >> anykernel.sh
+          echo 'do.modules=0' >> anykernel.sh
+          echo 'do.systemless=1' >> anykernel.sh
+          echo 'do.cleanup=1' >> anykernel.sh
+          echo 'do.cleanuponabort=0' >> anykernel.sh
+          echo 'device.name1=f50' >> anykernel.sh
+          echo 'device.name2=ums9620' >> anykernel.sh
+          echo 'device.name3=9050N' >> anykernel.sh
+          echo "supported.versions=12 - 13" >> anykernel.sh
+          echo "'"'"'; }' >> anykernel.sh
+          echo 'block=boot;' >> anykernel.sh
+          echo 'is_slot_device=1;' >> anykernel.sh
+          echo 'ramdisk_compression=auto;' >> anykernel.sh
+          zip -r9 $HOME/ZTE_F50_Kernel_KSU_Droidspaces.zip * -x .git README.md *placeholder
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZTE-F50-Kernel-KSU-Droidspaces
+          path: |
+            kernel-source/out/arch/arm64/boot/Image*
+            kernel-source/out/arch/arm64/boot/dts/sprd/*.dtb
+            $HOME/ZTE_F50_Kernel_KSU_Droidspaces.zip
+          if-no-files-found: warn
+
+      - name: Create Release
+        if: github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ github.run_number }}
+          name: ZTE F50 Kernel (KernelSU + Droidspaces) Build ${{ github.run_number }}
+          body: |
+            ZTE F50 (UMS9620) Kernel Build
+            - Android 12/13 compatible
+            - KernelSU: ${{ github.event.inputs.ksu_version }}
+            - Droidspaces configs: ${{ github.event.inputs.build_droidspaces }}
+            - Kernel version: 5.4.210
+            - 
+            ## Flash Instructions
+            1. Unlock bootloader first (see zte-f50-toolkit)
+            2. Flash via fastboot: `fastboot flash boot ZTE_F50_Kernel_KSU_Droidspaces.zip`
+            3. Or use AnyKernel3 zip in TWRP/Recovery
+            4. Install KernelSU Manager APK
+            5. Install Droidspaces app
+            6. Grant Root permission to Droidspaces
+            7. Check Requirements in Droidspaces settings
+          files: $HOME/ZTE_F50_Kernel_KSU_Droidspaces.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
