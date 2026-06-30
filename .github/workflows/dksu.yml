@@ -1,4 +1,4 @@
-name: Build ZTE F50 Kernel with KernelSU + Droidspaces
+name: Build ZTE F50 Kernel with KernelSU + Droidspaces v2
 
 on:
   workflow_dispatch:
