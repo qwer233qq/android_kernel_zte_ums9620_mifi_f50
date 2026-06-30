@@ -1,0 +1,33 @@
+name: Build ZTE F50 Kernel with KernelSU + Droidspaces
+
+on:
+  workflow_dispatch:
+    inputs:
+      ksu_version:
+        description: 'KernelSU version (e.g. v3.2.5, v1.1.1, or main)'
+        required: false
+        default: 'v3.2.5'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Build Kernel with KernelSU
+        uses: dabao1955/kernel_build_action@main
+        with:
+          kernel-url: https://github.com/qwer233qq/android_kernel_zte_ums9620_mifi_f50
+          kernel-branch: main
+          config: f50_defconfig
+          arch: arm64
+          aosp-gcc: true
+          aosp-clang: true
+          android-version: 12
+          aosp-clang-version: r416183b
+          ksu: true
+          ksu-version: ${{ github.event.inputs.ksu_version }}
+          anykernel3: true
+          release: true
+          access-token: ${{ secrets.GITHUB_TOKEN }}
