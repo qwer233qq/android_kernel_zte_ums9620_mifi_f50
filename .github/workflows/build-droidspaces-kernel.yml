@@ -1,0 +1,57 @@
+name: Build Droidspaces Kernel (F50 ums9620)
+
+on:
+  workflow_dispatch:
+    inputs:
+      toolchain:
+        description: '工具链 (5.4 内核推荐用 gcc)'
+        required: true
+        default: 'gcc'
+        type: choice
+        options:
+          - gcc
+          - clang
+      enable_user_ns:
+        description: '启用 USER_NS (容器工具链更灵活, 建议开启)'
+        required: true
+        default: true
+        type: boolean
+      original_boot_url:
+        description: '原厂 boot.img 直链(可选; 提供后自动重打包出可刷 boot.img)'
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-aarch64-linux-gnu device-tree-compiler \
+            libfdt-dev zlib1g-dev gcc make bc bison flex libssl-dev \
+            python3 file git
+
+      - name: 编译 Droidspaces 内核
+        run: |
+          chmod +x scripts/droidspaces_build.sh
+          ./scripts/droidspaces_build.sh build \
+            --toolchain ${{ inputs.toolchain }} \
+            --user-ns ${{ inputs.enable_user_ns }}
+
+      - name: 基于原厂 boot.img 重打包出可刷 boot.img
+        if: inputs.original_boot_url != ''
+        run: |
+          curl -L -o original_boot.img "${{ inputs.original_boot_url }}"
+          ./scripts/droidspaces_build.sh repack original_boot.img
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: droidspaces-f50-kernel
+          path: out/
+          if-no-files-found: error
