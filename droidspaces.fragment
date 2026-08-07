@@ -1,0 +1,24 @@
+# ============================================================
+# Droidspaces 容器运行时所需内核配置
+# 目标: ZTE F50 (ums9620-2h10_ufi), 内核 5.4.210
+#
+# Droidspaces 依赖真命名空间隔离(PID/MNT/UTS/IPC/NET/CGROUP)。
+# f50_defconfig 里 UTS_NS/NET_NS/NAMESPACES/CGROUPS 已开启,
+# 这里补齐缺失项。
+# ============================================================
+
+# --- 命名空间(核心, Droidspaces 必需) ---
+CONFIG_PID_NS=y
+CONFIG_MNT_NS=y
+CONFIG_IPC_NS=y
+
+# --- /dev 设备文件系统(容器内 devtmpfs 挂载, 建议) ---
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+
+# --- 用户命名空间(可选, 让容器内工具链/非 root 能力更完整) ---
+# 若不想要可注释掉 (build.sh 传 --user-ns false 即不启用)
+CONFIG_USER_NS=y
+
+# --- 网络: MACVLAN(可选, NAT/host 之外的更灵活网络) ---
+CONFIG_MACVLAN=y
